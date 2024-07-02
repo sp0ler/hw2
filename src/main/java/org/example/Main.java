@@ -49,9 +49,7 @@ public class Main {
         if (initialBlocks.equals(deliveredBlocks)) {
             log.info("Correct delivery");
         } else {
-            log.error("Error in delivery");
+            log.error("Error in delivery, initialBlocks={}, deliveredBlocks={}", initialBlocks.size(), deliveredBlocks.size());
         }
-
-
     }
 }
