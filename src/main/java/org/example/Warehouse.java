@@ -5,6 +5,7 @@ import lombok.extern.log4j.Log4j2;
 
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -16,13 +17,12 @@ import java.util.concurrent.locks.ReentrantLock;
 @Getter
 public class Warehouse extends Thread {
 
-    private final List<Block> storage = new ArrayList<>();
+    // зоны погрузки/разгрузки
+    private static final int exitCount = 1;
 
-    // Пришлось добавить обычную коллекцию, т.к. ее модификация происходит в "lock"
-    // Плюс не использую коллекцию с занятия, потому что там не реализованы методы remove, size и тд,
-    // а самому это доделывать нет времени
-    private final Queue<Truck> arrivedTruck = new LinkedList<>();
-    private final AtomicBoolean isExitNotFree = new AtomicBoolean(false);
+    private final List<Block> storage = new ArrayList<>();
+    // где capacity - количество зон для погрузки/разгрузки
+    private final BlockingQueue<Truck> arrivedTruck = new ArrayBlockingQueue<>(exitCount);
 
     private final Lock lock = new ReentrantLock();
     private final Condition condition = lock.newCondition();
@@ -123,32 +123,28 @@ public class Warehouse extends Thread {
             condition.await();
         }
 
-        return arrivedTruck.poll();
+        return arrivedTruck.remove();
     }
 
 
     public void arrive(Truck truck){
-        // Почему-то без флага в "lock" попадают несколько элементов,
-        // из-за этого пока в "arrivedTruck" не будет 0 элементов,
-        // поток лочится на 145 строке и ждет завершения всех потоков в коллекции,
-        // только после этого начинает отправляться на другой склад.
-        // Не совсем понимаю с чем это связано.
-        while (isExitNotFree.get()) {}
-
         lock.lock();
         try {
-            isExitNotFree.set(true);
+            // пока грузовик не выйдет из склада, залочится.
+            // тем самым гаранируется, что только один загружается или разгружается
+            // в поле exitCount можно указать и другое кол-во зон погрузки/разгрузки
+            while (arrivedTruck.size() >= exitCount) {
+                conditionWarehouse.await();
+            }
+
+            // может быть только 1 грузовик
             arrivedTruck.add(truck);
 
             //TODO необходимо реализовать логику по сообщению потоку склада о том, что грузовик приехал
             condition.signalAll();
 
             //TODO так же дождаться разгрузки блоков, при возврате из этого метода - грузовик покинет склад
-            while (truck.getBlocks().isEmpty()) {
-                conditionWarehouse.await();
-            }
-
-            isExitNotFree.set(false);
+            conditionWarehouse.await();
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         } finally {
